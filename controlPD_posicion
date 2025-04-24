@@ -1,0 +1,107 @@
+// Pines del motor y encoder
+const int ENCA = 2;   // Encoder A (Interrupción 0 en Uno)
+const int ENCB = 3;   // Encoder B
+const int PWM = 9;    // PWM motor
+const int IN1 = 8;    // Dirección 1
+const int IN2 = 7;    // Dirección 2
+
+// Variables del encoder
+volatile long encoderPos = 0;
+long targetPos = 270;  // 1 vuelta = 270 pulsos
+
+// Constantes del controlador PD
+float Kp = 20.0;       // Ganancia proporcional
+float Kd = 1.0;        // Ganancia derivativa (ajusta según necesidad)
+
+// Variables para cálculo derivativo
+long lastError = 0;
+unsigned long lastTime = 0;
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Configurar pines
+  pinMode(ENCA, INPUT_PULLUP);
+  pinMode(ENCB, INPUT_PULLUP);
+  pinMode(PWM, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  
+  // Configurar interrupción para flancos ascendentes en ENCA
+  attachInterrupt(digitalPinToInterrupt(ENCA), encoderISR, RISING);
+  
+  lastTime = millis(); // Inicializar tiempo
+}
+
+void loop() {
+  // Calcular error
+  long error = targetPos - encoderPos;
+  
+  // Calcular derivativa del error
+  unsigned long currentTime = millis();
+  float deltaTime = (currentTime - lastTime) / 1000.0; // en segundos
+  float derivative = (error - lastError) / deltaTime;
+  
+  // Control PD
+  int output = Kp * error + Kd * derivative;
+  output = constrain(output, -255, 255);
+  
+  // Aplicar al motor
+  setMotor(output);
+  
+  // Actualizar variables para próxima iteración
+  lastError = error;
+  lastTime = currentTime;
+  
+  // Mostrar información cada 100ms
+  static unsigned long lastPrint = 0;
+  if(millis() - lastPrint > 100) {
+    lastPrint = millis();
+    Serial.print("Posición: ");
+    Serial.print(encoderPos);
+    Serial.print(" | Error: ");
+    Serial.print(error);
+    Serial.print(" | Derivada: ");
+    Serial.print(derivative);
+    Serial.print(" | Salida: ");
+    Serial.println(output);
+  }
+  
+  delay(10);
+}
+
+// ISR para lectura del encoder (sin cambios)
+void encoderISR() {
+  // Determinar dirección mediante estado de ENCB
+  if(digitalRead(ENCB)) {
+    encoderPos--;  // Rotación inversa
+  } else {
+    encoderPos++;  // Rotación positiva
+  }
+}
+
+// Función para controlar el motor (sin cambios)
+void setMotor(int pwm) {
+  // Define el valor mínimo de PWM para mover el motor (ajústalo según pruebas)
+  const int minPWM = 70;  // Empíricamente, prueba entre 25-40
+  
+  // Aplica compensación de zona muerta
+  if (pwm > 0 && pwm < minPWM) {
+    pwm = minPWM;  // Fuerza el mínimo positivo
+  } else if (pwm < 0 && pwm > -minPWM) {
+    pwm = -minPWM; // Fuerza el mínimo negativo
+  }
+
+  // Control de dirección
+  if (pwm > 0) {
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+  } else if (pwm < 0) {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+  } else {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+  }
+  analogWrite(PWM, abs(pwm));
+}
