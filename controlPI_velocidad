@@ -1,0 +1,110 @@
+// Pines del motor y encoder
+const int ENCA = 2;   // Encoder A (Interrupción 0 en Uno)
+const int ENCB = 3;   // Encoder B
+const int PWM = 9;    // PWM motor
+const int IN1 = 8;    // Dirección 1
+const int IN2 = 7;    // Dirección 2
+
+// Variables del encoder
+volatile long encoderPos = 0;
+long prevEncoderPos = 0;
+float targetVel = 5*270.0;  // Velocidad objetivo en pulsos/segundo
+
+// Constantes del controlador PI
+float Kp = 20.0;       // Ganancia proporcional
+float Ki = 20.0;       // Ganancia integral
+float integral = 20.0; // Acumulador del término integral
+
+// Variables para cálculo de velocidad
+unsigned long prevTime = 0;
+float currentVel = 0.0;
+
+void setup() {
+  Serial.begin(9600);
+  
+  // Configurar pines
+  pinMode(ENCA, INPUT_PULLUP);
+  pinMode(ENCB, INPUT_PULLUP);
+  pinMode(PWM, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  
+  // Configurar interrupción para flancos ascendentes en ENCA
+  attachInterrupt(digitalPinToInterrupt(ENCA), encoderISR, RISING);
+  
+  prevTime = millis();
+  prevEncoderPos = encoderPos;
+}
+
+void loop() {
+  // Calcular velocidad actual
+  unsigned long currentTime = millis();
+  float deltaTime = (currentTime - prevTime) / 1000.0; // en segundos
+  if (deltaTime > 0) {
+    currentVel = (encoderPos - prevEncoderPos) / deltaTime;
+    prevEncoderPos = encoderPos;
+    prevTime = currentTime;
+  }
+  
+  // Calcular error de velocidad
+  float error = targetVel - currentVel;
+  
+  // Término integral (con anti-windup básico)
+  integral += error * deltaTime;
+  integral = constrain(integral, -1000.0, 1000.0); // Limitar el término integral
+  
+  // Control PI
+  int output = Kp * error + Ki * integral;
+  output = constrain(output, 30, 255);
+  
+  // Aplicar al motor
+  setMotor(output);
+  
+  // Mostrar información cada 100ms
+  static unsigned long lastPrint = 0;
+  if(millis() - lastPrint > 100) {
+    lastPrint = millis();
+    Serial.print("Velocidad: ");
+    Serial.print(currentVel);
+    Serial.print(" | Error: ");
+    Serial.print(error);
+    Serial.print(" | Integral: ");
+    Serial.print(integral);
+    Serial.print(" | Salida: ");
+    Serial.println(output);
+  }
+  
+  delay(10);
+}
+
+// ISR para lectura del encoder (sin cambios)
+void encoderISR() {
+  if(digitalRead(ENCB)) {
+    encoderPos--;  // Rotación inversa
+  } else {
+    encoderPos++;  // Rotación positiva
+  }
+}
+
+// Función para controlar el motor (sin cambios)
+void setMotor(int pwm) {
+  const int minPWM = 70;
+  
+  if (pwm > 0 && pwm < minPWM) {
+    pwm = minPWM;
+  } else if (pwm < 0 && pwm > -minPWM) {
+    pwm = -minPWM;
+  }
+
+  if (pwm > 0) {
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+  } else if (pwm < 0) {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+  } else {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+  }
+  analogWrite(PWM, abs(pwm));
+}
